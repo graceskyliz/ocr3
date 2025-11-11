@@ -1,0 +1,13 @@
+[Unit]
+Description=OCR Service
+After=network.target
+
+[Service]
+User=ec2-user
+EnvironmentFile=/etc/sysconfig/ocr-svc
+WorkingDirectory=/opt/ocr-svc
+ExecStart=/usr/bin/gunicorn -c gunicorn_conf.py app.main:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
