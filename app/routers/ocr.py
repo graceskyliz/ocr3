@@ -1,49 +1,30 @@
+# fragmento clave de app/routers/ocr.py
+import os, tempfile, boto3
 from fastapi import APIRouter, HTTPException
-from ..config import settings
+from ..ocr_local import analyze_file_local
+from ..textract_client import analyze_expense_s3   # lo mantienes para futuro
 from ..db import SessionLocal
-from ..models import Document, Extraction
 from ..finance_mapper import materialize_invoice
-from ..textract_client import analyze_expense_s3
-from ..s3_client import get_object_bytes
-import boto3, uuid
+from ..storage import get_s3_key_for_document
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
-s3 = boto3.client("s3", region_name=settings.AWS_REGION)
 
-def _bk(storage_key: str):  # bucket, key
-    return settings.S3_BUCKET, storage_key
+@router.post("/process/{doc_id}")
+def process_document(doc_id: str):
+    engine = os.getenv("OCR_ENGINE", "textract").lower()
+    s3 = boto3.client("s3", region_name=os.getenv("AWS_REGION","us-east-1"))
+    bucket, key = get_s3_key_for_document(doc_id)
 
-@router.post("/process/{document_id}")
-def process_document(document_id: str):
-    with SessionLocal() as db:
-        doc = db.get(Document, uuid.UUID(document_id))
-        if not doc:
-            raise HTTPException(404, "Documento no encontrado")
+    with tempfile.NamedTemporaryFile(suffix=os.path.splitext(key)[1], delete=True) as tmp:
+        s3.download_file(bucket, key, tmp.name)
 
-        bucket, key = _bk(doc.storage_key)
-
-        if doc.mime in ("application/pdf", "image/jpeg", "image/png"):
-            result = analyze_expense_s3(bucket, key)
-            engine = "textract-analyze-expense"
-        elif doc.mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-            raw = get_object_bytes(key)
-            from ..excel_parser import parse_invoice_xlsx
-            result = parse_invoice_xlsx(raw)
-            engine = "xlsx-parser"
+        if engine == "local":
+            result = analyze_file_local(tmp.name)
         else:
-            raise HTTPException(415, "MIME no soportado")
+            # Cuando habilites Textract, bastará con OCR_ENGINE=textract
+            result = analyze_expense_s3(bucket, key)
 
-        ext = Extraction(
-            id=uuid.uuid4(), document_id=doc.id, engine=engine,
-            json=result, confidence=result.get("confidence"), status="ok"
-        )
-        db.add(ext)
+    with SessionLocal() as db:
+        inv_id = materialize_invoice(db, doc_id, result)
 
-        # MATERIALIZAR EN FINANCE.*
-        invoice_id = materialize_invoice(db, doc.tenant_id, doc.id, result)
-
-        doc.status = "processed"
-        db.commit()
-
-    return {"extraction_id": str(ext.id), "engine": engine,
-            "confidence": result.get("confidence"), "invoice_id": str(invoice_id)}
+    return {"engine": result["engine"], "confidence": result["confidence"], "invoice_id": str(inv_id)}
