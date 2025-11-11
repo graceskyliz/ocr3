@@ -25,6 +25,6 @@ def process_document(doc_id: str):
             result = analyze_expense_s3(bucket, key)
 
     with SessionLocal() as db:
-        inv_id = materialize_invoice(db, doc_id, result)
+        inv_id = materialize_invoice(db, doc_id, result.get("engine"), result)
 
     return {"engine": result["engine"], "confidence": result["confidence"], "invoice_id": str(inv_id)}
