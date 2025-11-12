@@ -1,5 +1,6 @@
 # fragmento clave de app/routers/ocr.py
 from fastapi import APIRouter, HTTPException
+from sqlalchemy import text
 from ..ocr_local import analyze_file_local
 from ..textract_client import analyze_expense_s3   # lo mantienes para futuro
 from ..db import SessionLocal
@@ -40,9 +41,10 @@ def process_document(doc_id: str):
 
         inv_id = materialize_invoice(db, doc_id, engine, result)
         # opcional: guarda el tipo en la invoice
-        db.execute(text("""
-          UPDATE finance.invoices SET doc_kind=:k WHERE id=:inv_id
-        """), {"k": kind if kind in ("boleta","factura") else None, "inv_id": str(inv_id)})
+        db.execute(
+            text("""
+                UPDATE finance.invoices SET doc_kind=:k WHERE id=:inv_id
+            """), {"k": kind if kind in ("boleta","factura") else None, "inv_id": str(inv_id)})
         db.commit()
 
         return {"engine": engine, "doc_kind": kind, "invoice_id": str(inv_id), "confidence": result.get("confidence")}
