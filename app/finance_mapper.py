@@ -5,6 +5,8 @@ from datetime import date, datetime
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from .finance_models import Provider, Invoice, InvoiceItem
+from typing import Optional
+
 
 def _to_decimal(x):
     if x is None or x == "":
