@@ -1,5 +1,4 @@
 # fragmento clave de app/routers/ocr.py
-import os, tempfile, boto3
 from fastapi import APIRouter, HTTPException
 from ..ocr_local import analyze_file_local
 from ..textract_client import analyze_expense_s3   # lo mantienes para futuro
