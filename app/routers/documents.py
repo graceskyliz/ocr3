@@ -4,6 +4,7 @@ from ..db import SessionLocal
 from ..models import Document
 from ..s3_client import put_file, sha256_bytes
 import uuid, io
+from sqlalchemy import text
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -46,25 +47,25 @@ async def upload_document(
 
         # versión SQL cruda (funciona igual aunque el modelo no tenga las columnas todavía):
         db.execute(
-            """
-            INSERT INTO documents.documents
-              (id, tenant_id, user_id, filename, storage_key, mime, size, sha256, status, doc_kind, source_format)
-            VALUES
-              (:id, :tenant, :user, :fn, :key, :mime, :size, :sha, 'uploaded', :kind, :fmt)
-            """,
-            dict(
-                id=str(doc_id),
-                tenant=str(tenant_id),
-                user=str(user_id) if user_id else None,
-                fn=file.filename,
-                key=key,
-                mime=file.content_type,
-                size=len(raw),
-                sha=sha256_bytes(raw),
-                kind=doc_kind,
-                fmt=source_format,
-            ),
-        )
+    text("""
+        INSERT INTO documents.documents
+          (id, tenant_id, user_id, filename, storage_key, mime, size, sha256, status, doc_kind, source_format)
+        VALUES
+          (:id, :tenant, :user, :fn, :key, :mime, :size, :sha, 'uploaded', :kind, :fmt)
+    """),
+    dict(
+        id=str(doc_id),
+        tenant=str(tenant_id),
+        user=str(user_id) if user_id else None,
+        fn=file.filename,
+        key=key,
+        mime=file.content_type,
+        size=len(raw),
+        sha=sha256_bytes(raw),
+        kind=doc_kind,
+        fmt=source_format,
+    ),
+)
         db.commit()
 
     return {"id": str(doc_id), "storage_key": key}
