@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from pdf2image import convert_from_path
 from PIL import Image
 import pytesseract
+from fastapi import HTTPException
 
 # ------------ Utilidades de normalización ------------
 
@@ -280,3 +281,14 @@ def parse_factura_local(text: str) -> Dict[str, Any]:
     signals = sum(x is not None for x in [ruc, moneda, total, fecha, numero])
     confidence = 0.3 + 0.14 * signals
     return {"engine": "local-tesseract", "confidence": float(min(confidence, 0.99)), "parsed": parsed}
+
+
+def parse_excel_local(path: str) -> Dict[str, Any]:
+    """
+    Stub de parseo de Excel en local.
+    Por ahora no implementado: simplemente avisa con 501 para que el servicio no reviente al importar.
+    """
+    raise HTTPException(
+        status_code=501,
+        detail="parse_excel_local no está implementado en este servicio (Excel no soportado aún).",
+    )

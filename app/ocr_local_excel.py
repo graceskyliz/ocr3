@@ -2,7 +2,8 @@
 import pandas as pd
 from decimal import Decimal
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Any
+
 
 REQ = {"fecha","moneda","total"}
 
