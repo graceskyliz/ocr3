@@ -1,6 +1,8 @@
 # app/routers/ocr.py
 from uuid import UUID
 from typing import Dict, Any, Optional
+import logging
+import os
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
@@ -9,11 +11,8 @@ from app.settings import settings
 from ..db import SessionLocal
 from ..storage import download_to_tmp
 from ..finance_mapper import materialize_invoice
+# from ..textract_client import analyze_expense_s3  # futuro
 
-# Mantén este import para futuro (Textract en S3) si luego migras a AWS:
-# from ..textract_client import analyze_expense_s3
-
-# Funciones locales de OCR/parsing
 from ..ocr_local import (
     parse_excel_local,
     extract_text,
@@ -23,33 +22,37 @@ from ..ocr_local import (
 )
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
+log = logging.getLogger(__name__)
 
 
 @router.post("/process/{doc_id}")
 def process_document(doc_id: str) -> Dict[str, Any]:
     """
-    Procesa un documento ya subido a S3 (indicado por storage_key en BD).
+    Procesa un documento subido a S3 (clave en storage_key).
     Descarga a /tmp, detecta tipo (boleta/factura/excel) y persiste la invoice.
     """
 
-    # (Opcional) valida que el id tenga forma de UUID para evitar consultas inválidas
+    # 0) Validaciones tempranas
     try:
         UUID(str(doc_id))
     except Exception:
         raise HTTPException(status_code=400, detail="doc_id no es un UUID válido")
 
-    # Valida configuración mínima
-    ingest_bucket = getattr(settings, "INGEST_BUCKET", None)
-    if not ingest_bucket:
+    # Bucket: usa S3_BUCKET (variable real de entorno)
+    s3_bucket = getattr(settings, "S3_BUCKET", None)
+    if not s3_bucket:
+        # fallback por si quieres soportar ambos nombres de env
+        s3_bucket = os.getenv("S3_BUCKET") or os.getenv("INGEST_BUCKET")
+    if not s3_bucket:
         raise HTTPException(
             status_code=500,
-            detail="INGEST_BUCKET no está configurado (define la variable de entorno o usa settings.py)",
+            detail="S3_BUCKET no está configurado (define la variable de entorno o usa settings.py)",
         )
 
     local_path: Optional[str] = None
 
     with SessionLocal() as db:
-        # 1) Traer metadatos del documento
+        # 1) Metadatos del documento
         doc = db.execute(
             text(
                 """
@@ -64,47 +67,47 @@ def process_document(doc_id: str) -> Dict[str, Any]:
         if not doc:
             raise HTTPException(status_code=404, detail="document not found")
 
-        storage_key = doc.get("storage_key")
+        storage_key = (doc.get("storage_key") or "").strip()
         if not storage_key:
             raise HTTPException(status_code=422, detail="documento sin storage_key")
 
-        # 2) Descargar a /tmp desde S3
+        # 2) Descargar desde S3 a /tmp
         try:
-            local_path = download_to_tmp(ingest_bucket, storage_key)
+            local_path = download_to_tmp(s3_bucket, storage_key)
         except HTTPException:
-            # Errores controlados (404 NoSuchKey, etc.)
             raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Fallo al descargar de S3: {e}")
 
         try:
-            # 3) Determinar tipo/parsear
+            # 3) Determinar tipo y parsear
             kind = (doc.get("doc_kind") or "").lower()
             fmt = (doc.get("source_format") or "").lower()
 
-            if kind == "excel" or fmt == "xlsx":
-                # Parseo de Excel local
+            # heurística extra: por extensión
+            ext = os.path.splitext(storage_key)[1].lower().lstrip(".")
+
+            is_excel = (kind == "excel") or (fmt in {"xls", "xlsx"}) or (ext in {"xls", "xlsx"})
+            if is_excel:
                 result = parse_excel_local(local_path)
                 engine = "local-excel"
             else:
-                # OCR + parsing
                 raw = extract_text(local_path)
-
                 if not kind:
                     kind = (autodetect_kind(raw) or "factura").lower()
 
                 if kind == "boleta":
                     result = parse_boleta_local(raw)
                 else:
-                    # Por defecto, factura
                     result = parse_factura_local(raw)
+                    kind = "factura"  # normaliza
 
                 engine = "local-tesseract"
 
-            # 4) Materializar invoice en módulo de finanzas
+            # 4) Persistir invoice
             inv_id = materialize_invoice(db, doc_id, engine, result)
 
-            # 5) (Opcional) Persistir el tipo detectado en la invoice
+            # 5) Guardar tipo en la invoice (si aplica)
             db.execute(
                 text(
                     """
@@ -120,7 +123,9 @@ def process_document(doc_id: str) -> Dict[str, Any]:
             )
             db.commit()
 
-            # 6) Respuesta
+            # log mínimo para trazabilidad
+            log.info("ocr.process ok doc_id=%s engine=%s kind=%s", doc_id, engine, kind)
+
             return {
                 "engine": engine,
                 "doc_kind": kind,
@@ -129,18 +134,14 @@ def process_document(doc_id: str) -> Dict[str, Any]:
             }
 
         except HTTPException:
-            # Propaga errores de FastAPI tal cual
             raise
         except Exception as e:
-            # Cualquier error no controlado del pipeline
             raise HTTPException(status_code=500, detail=f"OCR/parse failed: {e}")
         finally:
-            # 7) Limpieza de /tmp aunque falle algo
+            # 6) Limpieza de /tmp
             if local_path:
                 try:
-                    import os
                     if os.path.exists(local_path):
                         os.remove(local_path)
                 except Exception:
-                    # No bloquear por cleanup
                     pass
