@@ -11,20 +11,39 @@ router = APIRouter(prefix="/ocr", tags=["ocr"])
 
 @router.post("/process/{doc_id}")
 def process_document(doc_id: str):
-    engine = os.getenv("OCR_ENGINE", "textract").lower()
-    s3 = boto3.client("s3", region_name=os.getenv("AWS_REGION","us-east-1"))
-    bucket, key = get_s3_key_for_document(doc_id)
-
-    with tempfile.NamedTemporaryFile(suffix=os.path.splitext(key)[1], delete=True) as tmp:
-        s3.download_file(bucket, key, tmp.name)
-
-        if engine == "local":
-            result = analyze_file_local(tmp.name)
-        else:
-            # Cuando habilites Textract, bastará con OCR_ENGINE=textract
-            result = analyze_expense_s3(bucket, key)
-
     with SessionLocal() as db:
-        inv_id = materialize_invoice(db, doc_id, result.get("engine"), result)
+        doc = db.execute(text("""
+            SELECT id::text, tenant_id::text, storage_key, doc_kind, source_format
+            FROM documents.documents
+            WHERE id = :id
+        """), {"id": doc_id}).mappings().first()
+        if not doc:
+            raise HTTPException(404, "document not found")
 
-    return {"engine": result["engine"], "confidence": result["confidence"], "invoice_id": str(inv_id)}
+        bucket, key = get_s3_key_for_document(doc["storage_key"])  # adapta si tu helper es distinto
+        local_path = download_to_tmp(bucket, key)                   # guarda en /tmp
+
+        kind = (doc["doc_kind"] or "").lower()
+        fmt  = (doc["source_format"] or "").lower()
+
+        if kind == "excel" or fmt == "xlsx":
+            result = parse_excel_local(local_path)
+            engine = "local-excel"
+        else:
+            raw = extract_text(local_path)
+            if not kind:
+                kind = autodetect_kind(raw) or "factura"
+            if kind == "boleta":
+                result = parse_boleta_local(raw)
+            else:
+                result = parse_factura_local(raw)
+            engine = "local-tesseract"
+
+        inv_id = materialize_invoice(db, doc_id, engine, result)
+        # opcional: guarda el tipo en la invoice
+        db.execute(text("""
+          UPDATE finance.invoices SET doc_kind=:k WHERE id=:inv_id
+        """), {"k": kind if kind in ("boleta","factura") else None, "inv_id": str(inv_id)})
+        db.commit()
+
+        return {"engine": engine, "doc_kind": kind, "invoice_id": str(inv_id), "confidence": result.get("confidence")}

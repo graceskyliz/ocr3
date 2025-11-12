@@ -11,31 +11,60 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def upload_document(
     file: UploadFile = File(...),
     tenant_id: str = Form(...),
-    user_id: str | None = Form(None)
+    user_id: str | None = Form(None),
+    doc_kind: str = Form(...),  # 'boleta' | 'factura' | 'excel'
 ):
     if file.content_type not in settings.ALLOWED_MIME:
         raise HTTPException(status_code=415, detail="MIME no permitido")
+
     raw = await file.read()
     if len(raw) > settings.MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Archivo muy grande")
+
+    # deducir formato fuente
+    name = (file.filename or "").lower()
+    if name.endswith(".xlsx") or name.endswith(".xls"):
+        source_format = "xlsx"
+    elif name.endswith(".pdf"):
+        source_format = "pdf"
+    elif name.endswith((".jpg", ".jpeg")):
+        source_format = "jpg"
+    elif name.endswith(".png"):
+        source_format = "png"
+    else:
+        source_format = "bin"
 
     doc_id = uuid.uuid4()
     key = f"{settings.S3_PREFIX}{tenant_id}/{doc_id}/{file.filename}"
     put_file(io.BytesIO(raw), key)
 
     with SessionLocal() as db:
-        d = Document(
-            id=doc_id,
-            tenant_id=uuid.UUID(tenant_id),
-            user_id=uuid.UUID(user_id) if user_id else None,
-            filename=file.filename,
-            storage_key=key,
-            mime=file.content_type,
-            size=len(raw),
-            sha256=sha256_bytes(raw),
-            status="uploaded"
+        # si usas ORM:
+        # d = Document(..., doc_kind=doc_kind, source_format=source_format)
+        # db.add(d)
+        # db.commit()
+
+        # versión SQL cruda (funciona igual aunque el modelo no tenga las columnas todavía):
+        db.execute(
+            """
+            INSERT INTO documents.documents
+              (id, tenant_id, user_id, filename, storage_key, mime, size, sha256, status, doc_kind, source_format)
+            VALUES
+              (:id, :tenant, :user, :fn, :key, :mime, :size, :sha, 'uploaded', :kind, :fmt)
+            """,
+            dict(
+                id=str(doc_id),
+                tenant=str(tenant_id),
+                user=str(user_id) if user_id else None,
+                fn=file.filename,
+                key=key,
+                mime=file.content_type,
+                size=len(raw),
+                sha=sha256_bytes(raw),
+                kind=doc_kind,
+                fmt=source_format,
+            ),
         )
-        db.add(d)
         db.commit()
 
     return {"id": str(doc_id), "storage_key": key}

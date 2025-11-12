@@ -2,6 +2,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, Text, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB, DOUBLE_PRECISION
 import uuid
+from enum import Enum
 
 class Base(DeclarativeBase): pass
 
@@ -28,3 +29,9 @@ class Extraction(Base):
     confidence: Mapped[float | None] = mapped_column(DOUBLE_PRECISION)
     status: Mapped[str] = mapped_column(String(16), default="ok")
     error_message: Mapped[str | None] = mapped_column(Text)
+
+
+class DocKind(str, Enum):
+    boleta = "boleta"
+    factura = "factura"
+    excel = "excel"

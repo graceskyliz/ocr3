@@ -193,3 +193,90 @@ def analyze_file_local(local_path: str) -> Dict[str, Any]:
         "raw_text": full_text[:20000],
         "parsed": parsed
     }
+
+# ====== añadir: helpers de OCR de archivo ======
+def extract_text(local_path: str) -> str:
+    """Devuelve texto OCR para PDF o imagen."""
+    buf = []
+    if local_path.lower().endswith(".pdf"):
+        for im in _images_from_pdf(local_path):
+            buf.append(_text_from_image(im))
+    else:
+        buf.append(_text_from_image(Image.open(local_path)))
+    return "\n".join(buf)
+
+# ====== añadir: autodetección simple del tipo ======
+def autodetect_kind(text: str) -> Optional[str]:
+    if re.search(r"\bBOLETA\b", text, re.IGNORECASE):
+        return "boleta"
+    if re.search(r"\bFACTURA\b", text, re.IGNORECASE):
+        return "factura"
+    # por defecto None (el router asumirá factura)
+    return None
+
+# ====== añadir: número específico por tipo ======
+def _extract_invoice_number_boleta(text: str) -> Optional[str]:
+    # EB01-419, B001-123456, etc.
+    m = re.search(r"\b([A-Z]{1}[A-Z0-9]{2}\d{2}-\d{1,12})\b", text, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    m = re.search(r"\b(B\d{3}-\d{1,12})\b", text, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    # contexto N°, No, # + dígitos
+    ctx = re.search(r"(BOLETA|N[°o]|#)\s*[:\-]?\s*(\d{6,12})", text, re.IGNORECASE)
+    if ctx:
+        return ctx.group(2)
+    return None
+
+def _extract_invoice_number_factura(text: str) -> Optional[str]:
+    m = re.search(r"\b(F\d{3}-\d{1,12})\b", text, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    ctx = re.search(r"(FACTURA|N[°o]|#)\s*[:\-]?\s*(\d{6,12})", text, re.IGNORECASE)
+    if ctx:
+        return ctx.group(2)
+    return None
+
+# ====== añadir: parseadores por tipo ======
+def parse_boleta_local(text: str) -> Dict[str, Any]:
+    ruc = _extract_ruc(text)
+    moneda = _extract_currency(text)
+    total = _extract_total(text)
+    fecha = _extract_date(text)
+    numero = _extract_invoice_number_boleta(text)
+
+    parsed = {
+        "provider": {"ruc": ruc},
+        "invoice": {
+            "numero": numero,
+            "fecha": fecha,
+            "moneda": moneda,
+            "total": str(total) if total is not None else None
+        },
+        "items": []
+    }
+    signals = sum(x is not None for x in [ruc, moneda, total, fecha, numero])
+    confidence = 0.3 + 0.14 * signals
+    return {"engine": "local-tesseract", "confidence": float(min(confidence, 0.99)), "parsed": parsed}
+
+def parse_factura_local(text: str) -> Dict[str, Any]:
+    ruc = _extract_ruc(text)
+    moneda = _extract_currency(text)
+    total = _extract_total(text)
+    fecha = _extract_date(text)
+    numero = _extract_invoice_number_factura(text)
+
+    parsed = {
+        "provider": {"ruc": ruc},
+        "invoice": {
+            "numero": numero,
+            "fecha": fecha,
+            "moneda": moneda,
+            "total": str(total) if total is not None else None
+        },
+        "items": []
+    }
+    signals = sum(x is not None for x in [ruc, moneda, total, fecha, numero])
+    confidence = 0.3 + 0.14 * signals
+    return {"engine": "local-tesseract", "confidence": float(min(confidence, 0.99)), "parsed": parsed}
