@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS auth.tenants(
   id UUID PRIMARY KEY, name TEXT, plan TEXT, status TEXT
 );
 CREATE TABLE IF NOT EXISTS auth.users(
-  id UUID PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, name TEXT, provider TEXT, metadata JSONB
+  id UUID PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, name TEXT, provider TEXT,
+  ruc VARCHAR(16),
+  metadata JSONB
 );
 
 -- DOCUMENTS
