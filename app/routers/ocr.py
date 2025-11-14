@@ -9,27 +9,28 @@ from sqlalchemy import text
 
 from app.settings import settings
 from ..db import SessionLocal
-from ..storage import download_to_tmp
+from ..storage_local import get_file_path
 from ..finance_mapper import materialize_invoice
-# from ..textract_client import analyze_expense_s3  # futuro
-
-from ..ocr_local import (
-    parse_excel_local,
-    extract_text,
-    autodetect_kind,
-    parse_boleta_local,
-    parse_factura_local,
+from ..gemini_client import (
+    configure_gemini, 
+    analyze_document_gemini, 
+    analyze_pdf_with_gemini
 )
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
 log = logging.getLogger(__name__)
 
+# Configurar Gemini al iniciar el router
+configure_gemini(settings.GEMINI_API_KEY)
+
 
 @router.post("/process/{doc_id}")
 def process_document(doc_id: str) -> Dict[str, Any]:
     """
-    Procesa un documento subido a S3 (clave en storage_key).
-    Descarga a /tmp, detecta tipo (boleta/factura/excel) y persiste la invoice.
+    Procesa un documento subido localmente usando Gemini Vision API.
+    Extrae información de boletas, facturas o documentos financieros.
+    
+    El resultado se puede enviar posteriormente a tu microservicio 'insights' para análisis con IA.
     """
 
     # 0) Validaciones tempranas
@@ -37,19 +38,6 @@ def process_document(doc_id: str) -> Dict[str, Any]:
         UUID(str(doc_id))
     except Exception:
         raise HTTPException(status_code=400, detail="doc_id no es un UUID válido")
-
-    # Bucket: usa S3_BUCKET (variable real de entorno)
-    s3_bucket = getattr(settings, "S3_BUCKET", None)
-    if not s3_bucket:
-        # fallback por si quieres soportar ambos nombres de env
-        s3_bucket = os.getenv("S3_BUCKET") or os.getenv("INGEST_BUCKET")
-    if not s3_bucket:
-        raise HTTPException(
-            status_code=500,
-            detail="S3_BUCKET no está configurado (define la variable de entorno o usa settings.py)",
-        )
-
-    local_path: Optional[str] = None
 
     with SessionLocal() as db:
         # 1) Metadatos del documento
@@ -71,43 +59,46 @@ def process_document(doc_id: str) -> Dict[str, Any]:
         if not storage_key:
             raise HTTPException(status_code=422, detail="documento sin storage_key")
 
-        # 2) Descargar desde S3 a /tmp
+        # 2) Obtener ruta local del archivo
         try:
-            local_path = download_to_tmp(s3_bucket, storage_key)
+            local_path = get_file_path(storage_key)
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Fallo al descargar de S3: {e}")
+            raise HTTPException(status_code=502, detail=f"Fallo al obtener archivo: {e}")
 
         try:
-            # 3) Determinar tipo y parsear
+            # 3) Determinar tipo y procesar con Gemini
             kind = (doc.get("doc_kind") or "").lower()
             fmt = (doc.get("source_format") or "").lower()
 
-            # heurística extra: por extensión
+            # Heurística extra: por extensión
             ext = os.path.splitext(storage_key)[1].lower().lstrip(".")
 
+            # Determinar tipo de documento (por defecto factura si no se especificó)
+            if not kind:
+                kind = "factura"
+            
+            # Validar que no sea Excel (no soportado con Gemini Vision)
             is_excel = (kind == "excel") or (fmt in {"xls", "xlsx"}) or (ext in {"xls", "xlsx"})
             if is_excel:
-                result = parse_excel_local(local_path)
-                engine = "local-excel"
+                raise HTTPException(
+                    status_code=422, 
+                    detail="Archivos Excel no son soportados en esta versión. Use solo PDF, JPG o PNG."
+                )
+
+            # 4) Procesar con Gemini Vision API
+            if fmt == "pdf" or ext == "pdf":
+                result = analyze_pdf_with_gemini(local_path, kind)
             else:
-                raw = extract_text(local_path)
-                if not kind:
-                    kind = (autodetect_kind(raw) or "factura").lower()
+                result = analyze_document_gemini(local_path, kind)
 
-                if kind == "boleta":
-                    result = parse_boleta_local(raw)
-                else:
-                    result = parse_factura_local(raw)
-                    kind = "factura"  # normaliza
+            engine = result.get("engine", "gemini-vision")
 
-                engine = "local-tesseract"
-
-            # 4) Persistir invoice
+            # 5) Persistir invoice
             inv_id = materialize_invoice(db, doc_id, engine, result)
 
-            # 5) Guardar tipo en la invoice (si aplica)
+            # 6) Guardar tipo en la invoice (si aplica)
             db.execute(
                 text(
                     """
@@ -117,31 +108,29 @@ def process_document(doc_id: str) -> Dict[str, Any]:
                     """
                 ),
                 {
-                    "k": kind if kind in ("boleta", "factura", "excel") else None,
+                    "k": kind if kind in ("boleta", "factura") else None,
                     "inv_id": str(inv_id),
                 },
             )
             db.commit()
 
-            # log mínimo para trazabilidad
+            # Log para trazabilidad
             log.info("ocr.process ok doc_id=%s engine=%s kind=%s", doc_id, engine, kind)
+
+            # Obtener datos parseados para respuesta
+            parsed_data = result.get("parsed", {})
 
             return {
                 "engine": engine,
                 "doc_kind": kind,
                 "invoice_id": str(inv_id),
-                "confidence": (result or {}).get("confidence"),
+                "confidence": result.get("confidence"),
+                "data": parsed_data,
+                "message": "OCR procesado exitosamente. Los datos están listos para enviar al microservicio 'insights'."
             }
 
         except HTTPException:
             raise
         except Exception as e:
+            log.error(f"Error procesando documento {doc_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"OCR/parse failed: {e}")
-        finally:
-            # 6) Limpieza de /tmp
-            if local_path:
-                try:
-                    if os.path.exists(local_path):
-                        os.remove(local_path)
-                except Exception:
-                    pass

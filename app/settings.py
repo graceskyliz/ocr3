@@ -3,6 +3,7 @@ import os
 from urllib.parse import quote_plus
 
 class Settings:
+    # Database
     DB_USER = os.getenv("DB_USER")
     DB_PASSWORD = os.getenv("DB_PASSWORD")
     DB_HOST = os.getenv("DB_HOST")
@@ -19,7 +20,16 @@ class Settings:
             f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
         )
 
-    S3_BUCKET = os.getenv("S3_BUCKET")
-    AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+    # Gemini API
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY es requerida")
+    
+    # Storage local
+    UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
+    MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "15"))
+    ALLOWED_MIME = set((os.getenv("ALLOWED_MIME") or
+                        "application/pdf,image/jpeg,image/png,"
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").split(","))
 
 settings = Settings()

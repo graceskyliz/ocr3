@@ -1,9 +1,10 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from ..config import settings
+from ..settings import settings
 from ..db import SessionLocal
 from ..models import Document
-from ..s3_client import put_file, sha256_bytes
-import uuid, io
+from ..storage_local import save_file_local, sha256_bytes
+import uuid
+import io
 from sqlalchemy import text
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -15,6 +16,10 @@ async def upload_document(
     user_id: str | None = Form(None),
     doc_kind: str = Form(...),  # 'boleta' | 'factura' | 'excel'
 ):
+    """
+    Endpoint para subir documentos (PDF, JPG, PNG) para procesamiento OCR.
+    Los archivos se guardan localmente en el servidor.
+    """
     if file.content_type not in settings.ALLOWED_MIME:
         raise HTTPException(status_code=415, detail="MIME no permitido")
 
@@ -22,7 +27,7 @@ async def upload_document(
     if len(raw) > settings.MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Archivo muy grande")
 
-    # deducir formato fuente
+    # Deducir formato fuente
     name = (file.filename or "").lower()
     if name.endswith(".xlsx") or name.endswith(".xls"):
         source_format = "xlsx"
@@ -36,36 +41,36 @@ async def upload_document(
         source_format = "bin"
 
     doc_id = uuid.uuid4()
-    key = f"{settings.S3_PREFIX}{tenant_id}/{doc_id}/{file.filename}"
-    put_file(io.BytesIO(raw), key)
+    
+    # Guardar archivo localmente
+    storage_key = save_file_local(io.BytesIO(raw), tenant_id, str(doc_id), file.filename)
 
     with SessionLocal() as db:
-        # si usas ORM:
-        # d = Document(..., doc_kind=doc_kind, source_format=source_format)
-        # db.add(d)
-        # db.commit()
-
-        # versión SQL cruda (funciona igual aunque el modelo no tenga las columnas todavía):
+        # Insertar registro en base de datos
         db.execute(
-    text("""
-        INSERT INTO documents.documents
-          (id, tenant_id, user_id, filename, storage_key, mime, size, sha256, status, doc_kind, source_format)
-        VALUES
-          (:id, :tenant, :user, :fn, :key, :mime, :size, :sha, 'uploaded', :kind, :fmt)
-    """),
-    dict(
-        id=str(doc_id),
-        tenant=str(tenant_id),
-        user=str(user_id) if user_id else None,
-        fn=file.filename,
-        key=key,
-        mime=file.content_type,
-        size=len(raw),
-        sha=sha256_bytes(raw),
-        kind=doc_kind,
-        fmt=source_format,
-    ),
-)
+            text("""
+                INSERT INTO documents.documents
+                  (id, tenant_id, user_id, filename, storage_key, mime, size, sha256, status, doc_kind, source_format)
+                VALUES
+                  (:id, :tenant, :user, :fn, :key, :mime, :size, :sha, 'uploaded', :kind, :fmt)
+            """),
+            {
+                "id": str(doc_id),
+                "tenant": str(tenant_id),
+                "user": str(user_id) if user_id else None,
+                "fn": file.filename,
+                "key": storage_key,
+                "mime": file.content_type,
+                "size": len(raw),
+                "sha": sha256_bytes(raw),
+                "kind": doc_kind,
+                "fmt": source_format,
+            },
+        )
         db.commit()
 
-    return {"id": str(doc_id), "storage_key": key}
+    return {
+        "id": str(doc_id), 
+        "storage_key": storage_key,
+        "message": "Documento subido exitosamente. Use /ocr/process/{doc_id} para procesarlo."
+    }
