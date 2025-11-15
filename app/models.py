@@ -9,15 +9,17 @@ class Base(DeclarativeBase): pass
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = {"schema": "documents"}
+
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    tenant_id: Mapped[str] = mapped_column(Text, nullable=False)
+    user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     filename: Mapped[str] = mapped_column(Text)
     storage_key: Mapped[str] = mapped_column(Text)
     mime: Mapped[str] = mapped_column(String(128))
     size: Mapped[int] = mapped_column(Integer)
     sha256: Mapped[str | None] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(32), default="uploaded")
+
 
 class Extraction(Base):
     __tablename__ = "extractions"

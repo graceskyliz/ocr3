@@ -31,7 +31,7 @@ def _to_date(x):
 def _get_doc_row(db: Session, doc_id: str):
     row = db.execute(
         text("""
-            SELECT id::text AS id, tenant_id::text AS tenant_id, storage_key, filename, mime
+            SELECT id::text AS id, tenant_id, storage_key, filename, mime
             FROM documents.documents
             WHERE id = :id
         """),
@@ -45,13 +45,13 @@ def _get_or_create_provider(db: Session, tenant_id: str, ruc: Optional[str]):
     prov = None
     if ruc:
         prov = db.query(Provider).filter(
-            Provider.tenant_id == uuid.UUID(tenant_id),
+            Provider.tenant_id == tenant_id,
             Provider.ruc == ruc
         ).one_or_none()
     if not prov:
         prov = Provider(
             id=uuid.uuid4(),
-            tenant_id=uuid.UUID(tenant_id),
+            tenant_id=tenant_id,
             ruc=ruc,
             razon_social=None,  # ya no usamos razón social
             estado="activo",
@@ -74,7 +74,7 @@ def materialize_invoice(db: Session, doc_id: str, engine: str, result: dict):
 
     inv = Invoice(
         id = uuid.uuid4(),
-        tenant_id = uuid.UUID(tenant_id),
+        tenant_id = tenant_id,
         provider_id = provider.id,
         document_id = doc_uuid,
         serie = None,  # no lo usamos por ahora

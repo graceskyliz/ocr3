@@ -9,7 +9,7 @@ class Provider(Base):
     __table_args__ = {"schema": "finance"}
 
     id = Column(UUID(as_uuid=True), primary_key=True)
-    tenant_id = Column(UUID(as_uuid=True), nullable=False)
+    tenant_id = Column(Text, nullable=False)
     ruc = Column(String(16))
     razon_social = Column(Text)
     direccion = Column(Text)
@@ -25,7 +25,7 @@ class Invoice(Base):
     __table_args__ = {"schema": "finance"}
 
     id = Column(UUID(as_uuid=True), primary_key=True)
-    tenant_id = Column(UUID(as_uuid=True), nullable=False)
+    tenant_id = Column(Text, nullable=False)
     provider_id = Column(UUID(as_uuid=True), ForeignKey("finance.providers.id"))
     document_id = Column(UUID(as_uuid=True))  # o FK a documents.documents si lo definiste
     serie = Column(Text)

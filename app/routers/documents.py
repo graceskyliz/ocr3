@@ -56,8 +56,8 @@ async def upload_document(
             """),
             {
                 "id": str(doc_id),
-                "tenant": str(tenant_id),
-                "user": str(user_id) if user_id else None,
+                "tenant": tenant_id,
+                "user": user_id,
                 "fn": file.filename,
                 "key": storage_key,
                 "mime": file.content_type,

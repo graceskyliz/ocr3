@@ -44,7 +44,7 @@ def process_document(doc_id: str) -> Dict[str, Any]:
         doc = db.execute(
             text(
                 """
-                SELECT id::text, tenant_id::text, storage_key, doc_kind, source_format
+                SELECT id::text, tenant_id, storage_key, doc_kind, source_format
                 FROM documents.documents
                 WHERE id = :id
                 """
