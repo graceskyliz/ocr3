@@ -4,7 +4,7 @@
 -- Agregar campos a auth.tenants
 ALTER TABLE auth.tenants ADD COLUMN IF NOT EXISTS whatsapp_number TEXT UNIQUE;
 ALTER TABLE auth.tenants ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
-ALTER TABLE auth.tenants ADD COLUMN IF NOT EXISTS metadata JSONB;
+ALTER TABLE auth.tenants ADD COLUMN IF NOT EXISTS meta JSONB;
 
 -- Crear índice para búsqueda rápida por whatsapp_number
 CREATE INDEX IF NOT EXISTS idx_tenants_whatsapp ON auth.tenants(whatsapp_number);

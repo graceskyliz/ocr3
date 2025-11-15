@@ -19,7 +19,7 @@ class Tenant(Base):
     plan: Mapped[str] = mapped_column(String(32), default="free")
     status: Mapped[str] = mapped_column(String(32), default="active")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), default=datetime.utcnow)
-    metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class User(Base):
@@ -44,6 +44,6 @@ class User(Base):
     # Metadata
     provider: Mapped[str | None] = mapped_column(Text, nullable=True)
     ruc: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), default=datetime.utcnow)

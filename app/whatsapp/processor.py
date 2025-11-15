@@ -11,7 +11,7 @@ from datetime import datetime
 from ..models import Document, Extraction
 from ..storage_local import save_file_local, get_file_path
 from ..gemini_client import analyze_document_gemini, analyze_pdf_with_gemini
-from ..finance_mapper import map_ocr_to_finance
+from ..finance_mapper import materialize_invoice
 from .client import download_media
 
 log = logging.getLogger(__name__)
@@ -120,7 +120,7 @@ async def process_whatsapp_media(
         
         # 7. Mapear a finance si es posible
         try:
-            map_ocr_to_finance(db, tenant_id, document.id, ocr_result)
+            materialize_invoice(db, str(document.id), ocr_result.get("engine", "gemini"), ocr_result)
             log.info(f"Datos mapeados a finance para documento {document.id}")
         except Exception as e:
             log.warning(f"No se pudo mapear a finance: {e}")
