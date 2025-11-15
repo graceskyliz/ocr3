@@ -7,6 +7,7 @@ import os
 load_dotenv()
 
 from .routers import documents, ocr
+from .whatsapp import router as whatsapp_router
 
 app = FastAPI(
     title="OCR Service with Gemini Vision API",
@@ -25,6 +26,7 @@ app.add_middleware(
 
 app.include_router(documents.router)
 app.include_router(ocr.router)
+app.include_router(whatsapp_router.router)
 
 @app.get("/health")
 def health():

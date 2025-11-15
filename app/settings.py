@@ -31,5 +31,10 @@ class Settings:
     ALLOWED_MIME = set((os.getenv("ALLOWED_MIME") or
                         "application/pdf,image/jpeg,image/png,"
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").split(","))
+    
+    # WhatsApp Cloud API
+    WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+    PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "")
+    APP_VERIFY_TOKEN = os.getenv("APP_VERIFY_TOKEN", "thesaurus-whatsapp")
 
 settings = Settings()
