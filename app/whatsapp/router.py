@@ -3,6 +3,7 @@
 import logging
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Request, Query, Depends
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -25,7 +26,7 @@ import os
 APP_VERIFY_TOKEN = os.getenv("APP_VERIFY_TOKEN", "thesaurus-whatsapp")
 
 
-@router.get("/whatsapp")
+@router.get("/whatsapp", response_class=PlainTextResponse)
 async def verify_webhook(
     mode: str = Query(None, alias="hub.mode"),
     token: str = Query(None, alias="hub.verify_token"),
@@ -43,7 +44,7 @@ async def verify_webhook(
     
     if mode == "subscribe" and token == APP_VERIFY_TOKEN:
         log.info("✅ Webhook verificado exitosamente")
-        return int(challenge)
+        return challenge
     
     log.warning("❌ Verificación fallida: token incorrecto o mode inválido")
     raise HTTPException(status_code=403, detail="Verificación de webhook fallida")
