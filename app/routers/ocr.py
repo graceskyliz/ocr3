@@ -98,21 +98,26 @@ def process_document(doc_id: str) -> Dict[str, Any]:
             # 5) Persistir invoice
             inv_id = materialize_invoice(db, doc_id, engine, result)
 
-            # 6) Guardar tipo en la invoice (si aplica)
-            db.execute(
-                text(
-                    """
-                    UPDATE finance.invoices
-                    SET doc_kind = :k
-                    WHERE id = :inv_id
-                    """
-                ),
-                {
-                    "k": kind if kind in ("boleta", "factura") else None,
-                    "inv_id": str(inv_id),
-                },
-            )
-            db.commit()
+            # 6) Intentar guardar tipo en la invoice (si aplica)
+            # Nota: algunas instalaciones pueden no tener la columna `doc_kind`.
+            # Protegemos la operación para que no falle el proceso OCR si falta la columna
+            try:
+                db.execute(
+                    text(
+                        """
+                        UPDATE finance.invoices
+                        SET doc_kind = :k
+                        WHERE id = :inv_id
+                        """
+                    ),
+                    {
+                        "k": kind if kind in ("boleta", "factura") else None,
+                        "inv_id": str(inv_id),
+                    },
+                )
+                db.commit()
+            except Exception as e:
+                log.warning("No se pudo actualizar finance.invoices.doc_kind (posible columna ausente): %s", e)
 
             # Log para trazabilidad
             log.info("ocr.process ok doc_id=%s engine=%s kind=%s", doc_id, engine, kind)
@@ -132,5 +137,6 @@ def process_document(doc_id: str) -> Dict[str, Any]:
         except HTTPException:
             raise
         except Exception as e:
-            log.error(f"Error procesando documento {doc_id}: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"OCR/parse failed: {e}")
+            log.exception("Error procesando documento %s", doc_id)
+            # Devolver detalle genérico al cliente para no filtrar stacktraces
+            raise HTTPException(status_code=500, detail="OCR/parse failed; consulte logs para más detalles")
