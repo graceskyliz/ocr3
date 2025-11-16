@@ -12,6 +12,8 @@ from ..models import Document, Extraction
 from ..storage_local import save_file_local, get_file_path
 from ..gemini_client import analyze_document_gemini, analyze_pdf_with_gemini
 from ..finance_mapper import materialize_invoice
+from ..excel_parcel import parse_invoice_xlsx
+import pandas as pd
 from .client import download_media
 
 log = logging.getLogger(__name__)
@@ -92,6 +94,70 @@ async def process_whatsapp_media(
             ocr_result = analyze_pdf_with_gemini(file_path, doc_kind="factura")
         elif mime_type in ["image/jpeg", "image/png"] or filename.lower().endswith((".jpg", ".jpeg", ".png")):
             ocr_result = analyze_document_gemini(file_path, doc_kind="factura")
+        # Excel/CSV handling
+        elif (
+            mime_type in (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.ms-excel",
+                "text/csv"
+            )
+            or filename.lower().endswith((".xlsx", ".xls", ".csv"))
+        ):
+            # XLSX
+            if filename.lower().endswith((".xlsx", ".xls")) or "spreadsheetml" in mime_type:
+                try:
+                    parsed = parse_invoice_xlsx(file_content)
+                    fields = parsed.get("fields", {})
+                    parsed_struct = {
+                        "provider": {"ruc": fields.get("ruc"), "razon_social": fields.get("proveedor")},
+                        "invoice": {
+                            "numero": fields.get("numero") or None,
+                            "fecha": fields.get("fecha") or None,
+                            "moneda": fields.get("moneda") or None,
+                            "total": fields.get("total") or None,
+                        },
+                        "items": parsed.get("items", []),
+                    }
+                    ocr_result = {"engine": "excel-xlsx", "confidence": parsed.get("confidence") or 0.99, "parsed": parsed_struct}
+                except Exception as e:
+                    log.error(f"Error parseando XLSX: {e}")
+                    return {"success": False, "error": f"Error parseando XLSX: {e}", "document_id": str(document.id)}
+            # CSV
+            else:
+                try:
+                    df = pd.read_csv(io.BytesIO(file_content))
+                    cols = {c.lower(): c for c in df.columns}
+                    req = {"fecha", "moneda", "total"}
+                    missing = req - set(cols)
+                    if missing:
+                        return {"success": False, "error": f"CSV debe contener columnas: {sorted(req)}. Faltan: {sorted(missing)}", "document_id": str(document.id)}
+                    r = df.iloc[0]
+                    def get(name, default=None):
+                        col = cols.get(name)
+                        if col is None: return default
+                        val = r[col]
+                        return default if pd.isna(val) else val
+
+                    fecha = None
+                    try:
+                        fecha = str(pd.to_datetime(get("fecha")).date()) if get("fecha") is not None else None
+                    except Exception:
+                        fecha = None
+
+                    moneda = (str(get("moneda", "")).strip().upper() or None)
+                    total = str(get("total", ""))
+                    numero = str(get("numero")) if "numero" in cols and get("numero") is not None else None
+                    ruc = str(get("ruc")) if "ruc" in cols and get("ruc") is not None else None
+
+                    parsed_struct = {
+                        "provider": {"ruc": ruc},
+                        "invoice": {"numero": numero, "fecha": fecha, "moneda": moneda, "total": total},
+                        "items": []
+                    }
+                    ocr_result = {"engine": "excel-csv", "confidence": 0.99, "parsed": parsed_struct}
+                except Exception as e:
+                    log.error(f"Error parseando CSV: {e}")
+                    return {"success": False, "error": f"Error parseando CSV: {e}", "document_id": str(document.id)}
         else:
             return {
                 "success": False,
